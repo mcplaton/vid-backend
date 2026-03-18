@@ -1,33 +1,51 @@
-from fastapi import FastAPI, HTTPException
+from flask import Flask, request, send_file
 import yt_dlp
-import uvicorn
+import os
+import glob
+import threading
+import time
 
-app = FastAPI()
+app = Flask(__name__)
 
-@app.get("/get_download_url")
-def get_url(url: str):
+def cleanup_old_files():
+    for f in glob.glob("temp_vidgo_*"):
+        try:
+            if os.path.getmtime(f) < time.time() - 600:
+                os.remove(f)
+        except:
+            pass
+
+@app.route('/')
+def home():
+    return "VidGo API is Running on Render 🚀"
+
+@app.route('/download')
+def download_media():
+    url = request.args.get('url')
+    is_audio = request.args.get('type') == 'audio'
+
     if not url:
-        raise HTTPException(status_code=400, detail="No URL provided")
+        return {"error": "No URL provided"}, 400
 
-    ydl_opts = {
-        'format': 'best',
+    threading.Thread(target=cleanup_old_files).start()
+
+    opts = {
+        'format': 'm4a/bestaudio/best' if is_audio else 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl': 'temp_vidgo_%(id)s_%(ext)s',
         'quiet': True,
-        'no_warnings': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'noplaylist': True,
     }
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            return {
-                "status": "success",
-                "title": info.get('title', 'video'),
-                "url": info.get('url'),
-                "thumbnail": info.get('thumbnail'),
-                "ext": info.get('ext', 'mp4')
-            }
+        print(f"🚀 Downloading: {url} | Audio Only: {is_audio}")
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            
+        print(f"✅ Success! Sending file...")
+        return send_file(filename, as_attachment=True)
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        print(f"❌ Error: {e}")
+        return {"error": str(e)}, 500
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+# ما نحتاج نكتب app.run هنا لأن Render راح يشغله عن طريق gunicorn
